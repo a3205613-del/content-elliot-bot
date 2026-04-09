@@ -5,6 +5,7 @@ Elliott Wave Telegram Bot
   /start          — приветствие
   /analyze AAPL   — анализ с таймфреймом по умолчанию (1d)
   /analyze AAPL 1w — с указанием таймфрейма
+  /portfolio      — сводка: Nasdaq, S&P500, Dow Jones, нефть
   /tf             — список доступных таймфреймов
   /symbols        — популярные тикеры
   /help           — справка
@@ -111,7 +112,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "*Как использовать:*\n"
         "  `/analyze AAPL` — анализ Apple\n"
         "  `/analyze ^GSPC 1w` — S\\&P500, недельный\n"
-        "  `/analyze BTC-USD 1d` — Bitcoin\n\n"
+        "  `/analyze BTC-USD 1d` — Bitcoin\n"
+        "  `/portfolio` — Nasdaq, S&P500, Dow Jones, Нефть\n\n"
         "  `/symbols` — список популярных тикеров\n"
         "  `/tf` — доступные таймфреймы\n"
         "  `/theory` — теория волн Эллиотта\n"
@@ -162,6 +164,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "*📖 Справка Elliott Wave Agent*\n\n"
         "*Команды:*\n"
         "  `/analyze <тикер> [таймфрейм]` — анализ\n"
+        "  `/portfolio [таймфрейм]` — Nasdaq, S&P500, Dow, Нефть\n"
         "  `/symbols` — популярные тикеры\n"
         "  `/tf` — таймфреймы\n"
         "  `/theory` — теория Эллиотта\n\n"
@@ -175,6 +178,70 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Или просто напиши тикер: `AAPL`"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+# ──────────────────────────────────────────────
+# PORTFOLIO — Nasdaq, S&P500, Dow Jones, Oil
+# ──────────────────────────────────────────────
+
+PORTFOLIO = [
+    {"symbol": "^IXIC", "name": "Nasdaq"},
+    {"symbol": "^GSPC", "name": "S&P 500"},
+    {"symbol": "^DJI",  "name": "Dow Jones"},
+    {"symbol": "CL=F",  "name": "Нефть WTI"},
+]
+
+
+async def cmd_portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    args = ctx.args
+    timeframe = args[0].lower() if args and args[0].lower() in TIMEFRAME_MAP else "1d"
+    tf_label = TIMEFRAME_MAP[timeframe]["label"]
+
+    msg = await update.message.reply_text(
+        f"⏳ Анализирую портфель [{tf_label}]...\nNasdaq • S&P500 • Dow Jones • Нефть WTI",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    results = []
+    for item in PORTFOLIO:
+        prices, _, error = fetch_prices(item["symbol"], timeframe)
+        if error or not prices:
+            results.append({"name": item["name"], "symbol": item["symbol"], "error": error or "Нет данных"})
+            continue
+        result = analyze(prices, item["symbol"], tf_label)
+        results.append({
+            "name":   item["name"],
+            "symbol": item["symbol"],
+            "price":  result.last_price,
+            "change": result.price_change_pct,
+            "wave":   result.wc.current_wave if result.wc else "?",
+            "trend":  result.wc.trend if result.wc else "?",
+            "score":  result.wc.score if result.wc else 0,
+            "valid":  result.wc.valid if result.wc else False,
+            "error":  None,
+        })
+
+    lines = [f"📋 *Портфель* | {tf_label}\n"]
+    for r in results:
+        if r.get("error"):
+            lines.append(f"⚠️ *{r['name']}* — {r['error']}\n")
+            continue
+        chg_emoji   = "🟢" if r["change"] >= 0 else "🔴"
+        trend_emoji = "📈" if r["trend"] == "UP" else "📉"
+        rules_emoji = "✅" if r["valid"] else "⚠️"
+        lines.append(
+            f"{trend_emoji} *{r['name']}* (`{r['symbol']}`)\n"
+            f"  {chg_emoji} {r['price']:,.2f}  ({r['change']:+.2f}%)\n"
+            f"  Волна: *{r['wave']}*  |  Score: *{r['score']:.0f}/100*  {rules_emoji}\n"
+        )
+
+    # Кнопки детального анализа
+    ok = [r for r in results if not r.get("error")]
+    btns = [InlineKeyboardButton(f"📊 {r['name']}", callback_data=f"analyze:{r['symbol']}:{timeframe}") for r in ok]
+    keyboard = InlineKeyboardMarkup([btns[:2], btns[2:]])
+
+    lines.append("_Нажми для детального анализа ↓_")
+    await msg.edit_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
 
 
 async def cmd_theory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -240,12 +307,13 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("analyze", cmd_analyze))
-    app.add_handler(CommandHandler("tf",      cmd_tf))
-    app.add_handler(CommandHandler("symbols", cmd_symbols))
-    app.add_handler(CommandHandler("help",    cmd_help))
-    app.add_handler(CommandHandler("theory",  cmd_theory))
+    app.add_handler(CommandHandler("start",     cmd_start))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+    app.add_handler(CommandHandler("tf",        cmd_tf))
+    app.add_handler(CommandHandler("symbols",   cmd_symbols))
+    app.add_handler(CommandHandler("help",      cmd_help))
+    app.add_handler(CommandHandler("theory",    cmd_theory))
     app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^analyze:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
