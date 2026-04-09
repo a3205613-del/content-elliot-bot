@@ -31,27 +31,33 @@ def fetch_prices(symbol: str, timeframe: str = "1d") -> tuple[list[float], str, 
     """
     tf = TIMEFRAME_MAP.get(timeframe, TIMEFRAME_MAP["1d"])
 
-    try:
-        ticker = yf.Ticker(symbol.upper())
-        df = ticker.history(period=tf["period"], interval=tf["interval"])
+    for attempt in range(3):  # 3 попытки
+        try:
+            ticker = yf.Ticker(symbol.upper())
+            df = ticker.history(period=tf["period"], interval=tf["interval"])
 
-        if df.empty:
-            return [], "", f"Символ '{symbol}' не найден или нет данных.\nПроверь тикер: AAPL, ^GSPC, BTC-USD"
+            if df is None or df.empty:
+                if attempt < 2:
+                    continue
+                return [], "", f"Нет данных для '{symbol}'. Попробуй: SPY, QQQ, AAPL, BTC-USD"
 
-        prices = df["Close"].dropna().tolist()
+            prices = df["Close"].dropna().tolist()
 
-        # Для 4H — агрегируем часовые свечи в 4-часовые
-        if timeframe == "4h":
-            prices = _aggregate_to_4h(prices)
+            if timeframe == "4h":
+                prices = _aggregate_to_4h(prices)
 
-        if len(prices) < 15:
-            return [], "", f"Мало данных для анализа ({len(prices)} баров). Попробуй таймфрейм 1d или 1w."
+            if len(prices) < 15:
+                return [], "", f"Мало данных ({len(prices)} баров). Попробуй таймфрейм 1d или 1w."
 
-        label = f"{symbol.upper()} | {tf['label']} | {len(prices)} баров"
-        return prices, label, ""
+            label = f"{symbol.upper()} | {tf['label']} | {len(prices)} баров"
+            return prices, label, ""
 
-    except Exception as e:
-        return [], "", f"Ошибка загрузки данных: {str(e)[:100]}"
+        except Exception as e:
+            if attempt < 2:
+                continue
+            return [], "", f"Ошибка загрузки '{symbol}': {str(e)[:80]}"
+
+    return [], "", f"Не удалось загрузить данные для '{symbol}' после 3 попыток."
 
 
 def get_ticker_info(symbol: str) -> dict:
